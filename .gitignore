@@ -1,0 +1,26 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/dist/
+backend/build/
+backend/*.spec
+backend/study_manager.db
+
+# Secretos
+backend/.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/release/
+
+# ChromaDB
+storage/chroma/
+
+# Archivos de estudio personales
+storage/materia_*/
+
+# OS
+.DS_Store
+Thumbs.db
