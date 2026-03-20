@@ -73,7 +73,7 @@ python -m venv venv
 
 **Windows:**
 ```bash
-venv\Scripts\activate
+venv/Scripts/activate
 ```
 
 **Mac/Linux:**
@@ -84,6 +84,7 @@ source venv/bin/activate
 Instalar dependencias:
 ```bash
 pip install -r requirements.txt
+pip install uvicorn
 ```
 
 Crear el archivo `.env` en la carpeta `backend/`:
@@ -108,7 +109,7 @@ Necesitás dos terminales abiertas:
 **Terminal 1 — Backend:**
 ```bash
 cd backend
-venv\Scripts\activate        # Windows
+venv/Scripts/activate        # Windows
 # source venv/bin/activate   # Mac/Linux
 python -m uvicorn main:app --reload --port 8000
 ```
