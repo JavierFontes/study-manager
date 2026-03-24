@@ -22,8 +22,8 @@ class MensajeRequest(BaseModel):
 @router.get("/modelos")
 def get_modelos():
     return {
-        "teorico": os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-        "practico": os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        "teorico": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        "practico": os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     }
 
 @router.post("/")
@@ -64,16 +64,13 @@ def enviar_mensaje(req: MensajeRequest, db: Session = Depends(get_db)):
             if resultados:
                 contexto = "\n\n--- Fragmentos relevantes de tus archivos ---\n"
                 for r in resultados:
-                    if r['score'] > 0.4:  # solo resultados suficientemente relevantes
+                    if r['score'] > 0.4:
                         contexto += f"\n[{r['nombre']}]:\n{r['chunk']}\n"
         except Exception as e:
-            print(f"[search] Error en búsqueda semántica: {e}")
+            print(f"[search] Error: {e}")
             contexto = ""
 
-        # Mensaje enriquecido con contexto
-        mensaje_enriquecido = req.mensaje
-        if contexto:
-            mensaje_enriquecido = f"{req.mensaje}{contexto}"
+        mensaje_enriquecido = req.mensaje + contexto if contexto else req.mensaje
 
         if req.agente == "teorico":
             stream = stream_teorico(historial, mensaje_enriquecido, req.imagen_base64, req.imagen_tipo)
@@ -122,7 +119,6 @@ def get_historial(sesion_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/sesiones/{sesion_id}")
 def eliminar_sesion(sesion_id: int, db: Session = Depends(get_db)):
-    # Borrar mensajes primero por la foreign key
     db.query(models.Mensaje).filter(models.Mensaje.sesion_id == sesion_id).delete()
     db.query(models.Sesion).filter(models.Sesion.id == sesion_id).delete()
     db.commit()

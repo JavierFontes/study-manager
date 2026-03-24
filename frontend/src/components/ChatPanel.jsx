@@ -5,6 +5,56 @@ import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import { getModelos, getHistorial } from '../api/client'
 import SessionsList from './SessionsList'
+import React from 'react' // Asegúrate de tener React importado
+
+const MensajeIndividual = React.memo(({ m }) => {
+  return (
+    <div className={`flex ${m.rol === 'user' ? 'justify-end' : 'justify-start'}`}>
+      {(m.contenido || m.imagenPreview) && (
+        <div
+          className={`max-w-[80%] px-4 py-3 rounded-2xl text-base leading-relaxed
+            ${m.rol === 'user' ? 'rounded-br-sm' : 'rounded-bl-sm'}`}
+          style={{
+            background: m.rol === 'user' ? 'var(--accent)' : 'var(--bg-card)',
+            border: m.rol === 'user' ? 'none' : '1px solid var(--border)',
+            color: m.rol === 'user' ? 'white' : 'var(--text-primary)'
+          }}
+        >
+          {m.imagenPreview && (
+            <img src={m.imagenPreview} alt="adjunto"
+              className="max-w-xs rounded-lg mb-2 max-h-48 object-contain" />
+          )}
+
+          {m.rol === 'assistant' ? (
+            <div
+              className="prose prose-base max-w-none
+                prose-p:my-1
+                prose-code:px-1 prose-code:rounded prose-code:text-xs
+                prose-code:before:content-none prose-code:after:content-none
+                prose-li:my-0.5"
+              style={{
+                color: 'var(--text-primary)',
+                '--tw-prose-headings': 'var(--text-primary)',
+                '--tw-prose-bold': 'var(--text-primary)',
+                '--tw-prose-code': 'var(--accent)',
+                '--tw-prose-bullets': 'var(--text-secondary)',
+                '--tw-prose-counters': 'var(--text-secondary)',
+              }}
+            >
+              <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                {m.contenido || '▋'}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            <span className="whitespace-pre-wrap">{m.contenido}</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+
+MensajeIndividual.displayName = 'MensajeIndividual';
 
 const ChatPanel = forwardRef(function ChatPanel({ materia, agente }, ref) {
   const [mensajes, setMensajes] = useState([])
@@ -17,6 +67,7 @@ const ChatPanel = forwardRef(function ChatPanel({ materia, agente }, ref) {
   const inputRef = useRef()
   const imagenRef = useRef()
   const containerRef = useRef()
+  const [mostrarBajar, setMostrarBajar] = useState(false)
 
   useEffect(() => {
     getModelos().then(r => setModelos(r.data)).catch(() => {})
@@ -27,13 +78,15 @@ const ChatPanel = forwardRef(function ChatPanel({ materia, agente }, ref) {
   }, [materia?.id, agente])
 
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-    const distanciaAlFondo = container.scrollHeight - container.scrollTop - container.clientHeight
-    if (distanciaAlFondo < 100) {
-      bottomRef.current?.scrollIntoView({ behavior: 'instant' })
-    }
-  }, [mensajes])
+  const container = containerRef.current
+  if (!container) return
+  const handleScroll = () => {
+    const distancia = container.scrollHeight - container.scrollTop - container.clientHeight
+    setMostrarBajar(distancia > 200)
+  }
+  container.addEventListener('scroll', handleScroll)
+  return () => container.removeEventListener('scroll', handleScroll)
+}, [])
 
   const nuevaConversacion = () => {
     setMensajes([])
@@ -42,6 +95,21 @@ const ChatPanel = forwardRef(function ChatPanel({ materia, agente }, ref) {
     setImagen(null)
   }
 
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !cargando) return; // Solo auto-scroll si está cargando
+
+    const isAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 400;
+
+    if (isAtBottom) {
+      // Usamos 'auto' durante el streaming para que no se "trabe"
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: 'auto' 
+      });
+    }
+  }, [mensajes, cargando]);
+  
   const cargarSesion = async (sesion) => {
     try {
       const res = await getHistorial(sesion.id)
@@ -74,6 +142,8 @@ const ChatPanel = forwardRef(function ChatPanel({ materia, agente }, ref) {
 
   const enviar = async (texto = input) => {
     if ((!texto.trim() && !imagen) || cargando) return
+    let buffer = "";
+    let interval = null;
     const msg = texto.trim()
     setInput('')
     if (inputRef.current) {
@@ -109,31 +179,81 @@ const ChatPanel = forwardRef(function ChatPanel({ materia, agente }, ref) {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
 
+      interval = setInterval(() => {
+        if (buffer.length > 0) {
+          const chunk = buffer;
+          buffer = "";
+
+          setMensajes(prev => {
+            const copia = [...prev];
+            const lastIndex = copia.length - 1;
+
+            if (lastIndex >= 0) {
+              copia[lastIndex] = {
+                ...copia[lastIndex],
+                contenido: copia[lastIndex].contenido + chunk
+              };
+            }
+
+            return copia;
+          });
+        }
+      }, 150);
+
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
+
+        if (done) {
+          clearInterval(interval);
+          setCargando(false);
+          return;
+        }
+
         const lines = decoder.decode(value).split('\n')
+
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
+
           const data = line.slice(6)
+
           if (data === '[DONE]') {
-            if (SessionsList.recargar) SessionsList.recargar()
-            break
+            clearInterval(interval);
+
+            if (buffer.length > 0) {
+              setMensajes(prev => {
+                const copia = [...prev];
+                const lastIndex = copia.length - 1;
+
+                if (lastIndex >= 0) {
+                  copia[lastIndex] = {
+                    ...copia[lastIndex],
+                    contenido: copia[lastIndex].contenido + buffer
+                  };
+                }
+
+                return copia;
+              });
+              buffer = "";
+            }
+
+            if (SessionsList.recargar) SessionsList.recargar();
+
+            setCargando(false);
+            return;
           }
+
           try {
             const parsed = JSON.parse(data)
+
             if (parsed.sesion_id) setSesionId(parsed.sesion_id)
+
             if (parsed.delta) {
-              setMensajes(prev => {
-                const copia = [...prev]
-                copia[copia.length - 1] = {
-                  ...copia[copia.length - 1],
-                  contenido: copia[copia.length - 1].contenido + parsed.delta
-                }
-                return copia
-              })
+              buffer += parsed.delta;
             }
-          } catch { /* chunk incompleto */ }
+
+          } catch (err) {
+            console.error("ERROR REAL:", err);
+          }
         }
       }
     } catch {
@@ -161,26 +281,13 @@ const ChatPanel = forwardRef(function ChatPanel({ materia, agente }, ref) {
   return (
     <div className="flex flex-col h-full min-h-0">
 
-      {/* Indicador de modelo + botón nueva conversación */}
-      <div className="flex items-center justify-between px-4 py-2 shrink-0"
+      {/* Indicador de modelo */}
+      <div className="flex items-center px-4 py-2 shrink-0"
         style={{ borderBottom: '1px solid var(--border)' }}>
-        <div className="flex items-center gap-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-            {modeloActual || 'cargando...'}
-          </span>
-        </div>
-        <button
-          onClick={nuevaConversacion}
-          className="text-xs px-3 py-1 rounded-lg transition-all"
-          style={{
-            background: 'var(--bg-input)',
-            border: '1px solid var(--border)',
-            color: 'var(--text-secondary)'
-          }}
-        >
-          + Nueva conversación
-        </button>
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        <span className="text-xs font-mono ml-2" style={{ color: 'var(--text-muted)' }}>
+          {modeloActual || 'cargando...'}
+        </span>
       </div>
 
       {/* Historial de sesiones */}
@@ -210,48 +317,7 @@ const ChatPanel = forwardRef(function ChatPanel({ materia, agente }, ref) {
         )}
 
         {mensajes.map((m, i) => (
-          <div key={i} className={`flex ${m.rol === 'user' ? 'justify-end' : 'justify-start'}`}>
-            {(m.contenido || m.imagenPreview) && (
-              <div
-                className={`max-w-[80%] px-4 py-3 rounded-2xl text-base leading-relaxed
-                  ${m.rol === 'user' ? 'rounded-br-sm' : 'rounded-bl-sm'}`}
-                style={{
-                  background: m.rol === 'user' ? 'var(--accent)' : 'var(--bg-card)',
-                  border: m.rol === 'user' ? 'none' : '1px solid var(--border)',
-                  color: m.rol === 'user' ? 'white' : 'var(--text-primary)'
-                }}
-              >
-                {m.imagenPreview && (
-                  <img src={m.imagenPreview} alt="adjunto"
-                    className="max-w-xs rounded-lg mb-2 max-h-48 object-contain" />
-                )}
-
-                {m.rol === 'assistant' ? (
-                  <div
-                    className="prose prose-base max-w-none
-                      prose-p:my-1
-                      prose-code:px-1 prose-code:rounded prose-code:text-xs
-                      prose-code:before:content-none prose-code:after:content-none
-                      prose-li:my-0.5"
-                    style={{
-                      color: 'var(--text-primary)',
-                      '--tw-prose-headings': 'var(--text-primary)',
-                      '--tw-prose-bold': 'var(--text-primary)',
-                      '--tw-prose-code': 'var(--accent)',
-                      '--tw-prose-bullets': 'var(--text-secondary)',
-                      '--tw-prose-counters': 'var(--text-secondary)',
-                    }}
-                  >
-                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                      {m.contenido || '▋'}
-                    </ReactMarkdown>
-                  </div>
-                ) : (
-                  <span className="whitespace-pre-wrap">{m.contenido}</span>
-                )}
-              </div>
-            )}
-          </div>
+          <MensajeIndividual key={i} m={m} agente={agente} />
         ))}
 
         {cargando && mensajes[mensajes.length - 1]?.contenido === '' && (
@@ -267,6 +333,27 @@ const ChatPanel = forwardRef(function ChatPanel({ materia, agente }, ref) {
                   style={{ background: 'var(--text-muted)' }} />
               </div>
             </div>
+          </div>
+        )}
+        {mostrarBajar && (
+          <div className="sticky bottom-4 flex justify-center">
+            <button
+              onClick={() => {
+                containerRef.current?.scrollTo({
+                  top: containerRef.current.scrollHeight,
+                  behavior: 'smooth'
+                });
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-full text-xs shadow-lg transition-all"
+              style={{
+                background: 'var(--accent)',
+                color: 'white',
+                border: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              ↓
+            </button>
           </div>
         )}
         <div ref={bottomRef} />

@@ -84,6 +84,7 @@ source venv/bin/activate
 Instalar dependencias:
 ```bash
 pip install -r requirements.txt
+pip install uvicorn
 ```
 
 Crear el archivo `.env` en la carpeta `backend/`:
